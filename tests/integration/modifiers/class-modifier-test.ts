@@ -1,4 +1,7 @@
 import { module, test } from 'qunit';
+import { later } from '@ember/runloop';
+import { action } from '@ember/object';
+import { tracked } from '@glimmer/tracking';
 import { setupRenderingTest } from 'ember-qunit';
 import { render, settled } from '@ember/test-helpers';
 import { TestContext as BaseContext } from 'ember-test-helpers';
@@ -492,6 +495,53 @@ module('Integration | Modifier Manager | class-based modifier', function (
         }
       }
   );
+
+  module('inter-dependent modifiers', function () {
+    test('a modifier can update when receiving an argument set from another modifier', async function (this: TestContext, assert) {
+      let barReceivedArguments = 0;
+      class Context {
+        @tracked baz?: Element;
+
+        @action
+        setBaz(value: Element): void {
+          this.baz = value;
+        }
+      }
+
+      this.setProperties({ context: new Context() });
+
+      class FooModifier extends Modifier<{
+        named: { onInstall: (value: Element) => void };
+        positional: [];
+      }> {
+        didInstall(): void {
+          later(this, 'doCallback', 500);
+        }
+
+        doCallback() {
+          this.args.named.onInstall(this.element);
+        }
+      }
+      class BarModifier extends Modifier {
+        didReceiveArguments(): void {
+          barReceivedArguments++;
+        }
+      }
+
+      this.owner.register('modifier:foo', FooModifier);
+      this.owner.register('modifier:bar', BarModifier);
+
+      await render(
+        hbs`<h1 {{foo onInstall=this.context.setBaz}} {{bar this.context.baz}}>Hello</h1>`
+      );
+
+      assert.equal(
+        barReceivedArguments,
+        2,
+        `{{bar}}'s didReceiveArguments is invoked twice'`
+      );
+    });
+  });
 
   module('service injection', function () {
     test('can participate in ember dependency injection', async function (this: TestContext, assert) {
